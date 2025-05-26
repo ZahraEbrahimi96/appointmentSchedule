@@ -13,10 +13,20 @@ import java.util.List;
 public interface AppointmentRepository extends JpaRepository<Appointment, Long> {
 
 
-    List<Appointment> findByPatientPatientId(Long patientId);
+    @Query("select a from appointmentEntity a where a.patient.patientId = :patientId")
+    List<Appointment> findByPatientId(Long patientId);
+
+    @Query("select a from appointmentEntity a where a.patient.lastName =:lastName")
+    List<Appointment> findByPatientName(String lastName);
+
+    @Query("select a from appointmentEntity a where a.schedule.doctor.id = :doctorId")
+    List<Appointment> findByDoctorId(Long doctorId);
+
+    @Query("select a from appointmentEntity a where a.schedule.doctor.name =:doctorName")
+    List<Appointment> findByDoctorName(String doctorName);
 
     @Query ("select a from appointmentEntity a where a.schedule.id = :scheduleId and a.startDateTime <= :endTime and a.endDateTime >= :startTime")
-    List<Appointment> findOverlappingAppointments(
+    List<Appointment> findOverlappingTime(
       @Param("scheduleId") Long scheduleId,
       @Param("startTime") LocalDateTime startTime,
       @Param("endTime") LocalDateTime endTime
@@ -31,7 +41,7 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
             @Param("startTime") LocalDateTime startTime
     );
 
-    @Query("select a from appointmentEntity a where :startTime between a.startDateTime and a.endDateTime or :endTime between a.startDateTime and a.endDateTime" )
-    List<Appointment> findByAvailableTime(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
+//    @Query("select a from appointmentEntity a where :startTime between a.startDateTime and a.endDateTime or :endTime between a.startDateTime and a.endDateTime" )
+//    List<Appointment> findByAvailableTime(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 
 }

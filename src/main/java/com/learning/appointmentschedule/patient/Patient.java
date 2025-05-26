@@ -46,6 +46,6 @@ public class Patient {
     @Column(name = "deleted")
     private boolean deleted = false;
 
-    @OneToMany(mappedBy = "patient", fetch = FetchType.EAGER)
+    @OneToMany(mappedBy = "patient")
     private List<Appointment> appointments = new ArrayList<>();
 }

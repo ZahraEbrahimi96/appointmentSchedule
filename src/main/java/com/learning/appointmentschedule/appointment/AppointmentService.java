@@ -1,11 +1,19 @@
 package com.learning.appointmentschedule.appointment;
 
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learning.appointmentschedule.doctor.Doctor;
+import com.learning.appointmentschedule.doctor.DoctorRepository;
 import com.learning.appointmentschedule.doctor.DoctorService;
+import com.learning.appointmentschedule.dtos.AppointmentScheduleDto;
 import com.learning.appointmentschedule.patient.Patient;
+import com.learning.appointmentschedule.patient.PatientRepository;
+import com.learning.appointmentschedule.patient.PatientService;
 import com.learning.appointmentschedule.schedule.Schedule;
 import com.learning.appointmentschedule.schedule.ScheduleRepository;
+import com.learning.appointmentschedule.schedule.ScheduleService;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,19 +28,19 @@ import java.util.Optional;
 public class AppointmentService {
 
     private final AppointmentRepository appointmentRepository;
-    private final ScheduleRepository scheduleRepository;
-    private final DoctorService doctorService;
+    private final ScheduleService scheduleService;
+    private final PatientService patientService;
 
-    public AppointmentService(AppointmentRepository appointmentRepository, ScheduleRepository scheduleRepository,
-                              DoctorService doctorService) {
+    public AppointmentService(AppointmentRepository appointmentRepository, ScheduleService scheduleService, PatientService patientService) {
         this.appointmentRepository = appointmentRepository;
-        this.scheduleRepository = scheduleRepository;
-        this.doctorService = doctorService;
-
+        this.scheduleService = scheduleService;
+        this.patientService = patientService;
     }
 
-    public List<LocalDateTime> findAvailableTime(String doctorId, LocalDate date) {
-        Optional<Schedule> scheduleOpt = findScheduleByDoctorCodeAndDate(doctorId, date);
+
+    @Transactional
+    public List<LocalDateTime> findAvailableTime(Long doctorId, LocalDateTime startDay, LocalDateTime endDay) throws Exception {
+        Optional<Schedule> scheduleOpt = scheduleService.findScheduleByDoctorIdAndDate(doctorId, startDay, endDay);
         if (scheduleOpt.isEmpty()) {
             return Collections.emptyList();
         }
@@ -41,98 +49,83 @@ public class AppointmentService {
 
         LocalDateTime dayStart = schedule.getStartDateTime();
         LocalDateTime dayEnd = schedule.getEndDateTime();
-        int appointmentDurationMin = schedule.getAppointmentDurationMin();
+        int appointmentDurationMin = schedule.getDurationMin();
 
         List<LocalDateTime> availableTimes = new ArrayList<>();
-        LocalDateTime currentTime = dayStart;
-        while (currentTime.isBefore(dayEnd)){
-            LocalDateTime endTime = currentTime.plusMinutes(appointmentDurationMin);
+
+        while (dayStart.isBefore(dayEnd)){
+            LocalDateTime endTime = dayStart.plusMinutes(appointmentDurationMin);
             if (endTime.isAfter(dayEnd)){
                 break;
             }
 
-            List<Appointment> overlapping = appointmentRepository.findOverlappingAppointments(schedule.getId(), currentTime, endTime);
+            List<Appointment> overlapping = appointmentRepository.findOverlappingTime(schedule.getId(), dayStart, endTime);
             if (overlapping.isEmpty()){
-                availableTimes.add(currentTime);
+                availableTimes.add(dayStart);
             }
-            currentTime = currentTime.plusMinutes(appointmentDurationMin);
+            dayStart = dayStart.plusMinutes(appointmentDurationMin);
         }
         return availableTimes;
     }
 
-
     @Transactional
-    public Appointment saveAppointment(String doctorCode, LocalDateTime chosenStartTime, Patient patient) throws Exception{
-        Optional<Schedule> scheduleOpt = findScheduleByDoctorCodeAndDate(
-                doctorCode, chosenStartTime.toLocalDate()
-        );
+    public Appointment saveAppointment(Long doctorId, Appointment appointment) throws Exception{
+
+        Optional<Schedule> scheduleOpt = scheduleService.findScheduleByDoctorIdAndDate( doctorId, appointment.getStartDateTime(), appointment.getEndDateTime());
         if (scheduleOpt.isEmpty()){
             throw new Exception("No schedule found for this doctor");
         }
         Schedule schedule = scheduleOpt.get();
 
-        int appointmentDurationMin= schedule.getAppointmentDurationMin();
-        LocalDateTime chosenEndTime = chosenStartTime.plusMinutes(appointmentDurationMin);
+        LocalDateTime startOfTime = appointment.getStartDateTime();
+        int appointmentDurationMin= schedule.getDurationMin();
+        LocalDateTime endOfTime = startOfTime.plusMinutes(appointmentDurationMin);
 
-        if (chosenStartTime.isBefore(schedule.getStartDateTime()) || chosenEndTime.isAfter(schedule.getEndDateTime())){
+        if (startOfTime.isBefore(schedule.getStartDateTime()) || endOfTime.isAfter(schedule.getEndDateTime())){
             throw new Exception("Chosen time is not on the doctor's schedule");
         }
 
-        if (appointmentRepository.existsByScheduleIdAndStartTime(schedule.getId(), chosenStartTime )){
+        if (appointmentRepository.existsByScheduleIdAndStartTime(schedule.getId(), startOfTime )){
             throw new Exception("This appointment is already booked");
         }
-
-        Appointment appointment = Appointment.builder()
-                .schedule(schedule)
-                .patient(patient)
-                .startDateTime(chosenStartTime)
-                .endDateTime(chosenEndTime)
-                .build();
-        return appointmentRepository.save(appointment);
-    }
-
-    private Optional<Schedule> findScheduleByDoctorCodeAndDate (String doctorId, LocalDate date) {
-        Optional <Doctor> doctorOpt = doctorRepository.getDoctorId(doctorId);
-        if (doctorOpt.isEmpty()) {
-            return Optional.empty();
+        ResponseEntity<String>patientResponse = patientService.save(appointment.getPatient());
+        if(patientResponse.getStatusCode().equals(HttpStatus.OK)){
+            ObjectMapper mapper = new ObjectMapper();
+            Patient patient = mapper.readValue(patientResponse.getBody(), Patient.class);
+            patientService.save(patient);
+            appointment.setPatient(patient);
+            appointmentRepository.save(appointment);
         }
-        LocalDateTime startOfDay = date.atStartOfDay();
-        LocalDateTime endOfDay = date.atTime(23, 59, 59);
-        return scheduleRepository.findByDoctorIdAndStartDateTimeLessThanEqualAndEndDateTimeGreaterThanEqual(
-                doctorOpt.get().getId(), endOfDay, startOfDay
-        );
+        return appointment;
     }
 
-    // Get all appointments
     public List<Appointment> getAllAppointments() {
         return appointmentRepository.findAll();
     }
 
-    // Get appointment by ID
     public Optional<Appointment> getAppointmentById(Long id) {
         return appointmentRepository.findById(id);
     }
 
 
-//    public Appointment updateAppointment(Long id, String doctorCode, Appointment appointment ) {
-//        return appointmentRepository.findById(id)
-//                .map(existingAppointment -> {
-//                    existingAppointment.setStartDateTime(updatedAppointment.getStartDateTime());
-//                    existingAppointment.setEndDateTime(updatedAppointment.getEndDateTime());
-//                    existingAppointment.setPatient(updatedAppointment.getPatient());
-//                    return appointmentRepository.save(existingAppointment);
-//                })
-//                .orElseThrow(() -> new RuntimeException("Appointment not found with id: " + id));
-//    }
-
-    // Delete an appointment by ID
     public void deleteAppointment(Long id) {
         appointmentRepository.deleteById(id);
     }
 
-    // Get appointments by patient ID
     public List<Appointment> getAppointmentsByPatientId(Long patientId) {
-        return appointmentRepository.findByPatientPatientId(patientId);
+        return appointmentRepository.findByPatientId(patientId);
+    }
+
+    public List<Appointment> getAppointmentsByPatientName(String lastName) {
+        return appointmentRepository.findByPatientName(lastName);
+    }
+
+    public List<Appointment> getAppointmentsByDoctorId(Long doctorId) {
+        return appointmentRepository.findByDoctorId(doctorId);
+    }
+
+    public List<Appointment> getAppointmentsByDoctorName(String doctorName) {
+        return appointmentRepository.findByDoctorName(doctorName);
     }
 
 }
